@@ -61,25 +61,19 @@ docker run --env-file .env -p 8000:8000 gaggia-agent
 Open http://localhost:8000
 
 ---
-
 ## Quickstart
 
 ```bash
 python -m venv .venv
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-
-# Optional: semantic Chroma index (only if RETRIEVER_BACKEND=chroma).
-# Default tests and local runs use keyword retrieval — no offline build needed.
-# python scripts/build_policy_index.py
 
 # Run the test suite
 pytest -q
 
-# Run the evaluation suite (21 official + 16 regression scenarios)
-python scripts/run_eval.py --all
+# Run the local demo server
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1
 ```
-
 No API key is needed to run tests or the evaluation suite. The agent falls back to deterministic logic automatically.
 
 ---
