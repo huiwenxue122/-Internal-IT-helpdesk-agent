@@ -99,8 +99,6 @@ pip install -r requirements.txt
 # Run the test suite
 pytest -q
 
-# Run the evaluation suite (21 official + 16 regression scenarios)
-python scripts/run_eval.py --all
 ```
 
 **Run the bundled demo server locally** (after `npm --prefix demo_ui install && npm --prefix demo_ui run build`; without a build you still get `/api/*`, but not the React SPA at `/`):
