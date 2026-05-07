@@ -26,6 +26,7 @@ DIRECTORY_ALLOWED: frozenset[str] = frozenset(
         "office",
         "work_email",
         "work_phone",
+        "direct_reports",  # org-chart data, allowed under §3.1
     }
 )
 

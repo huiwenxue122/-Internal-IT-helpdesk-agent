@@ -148,6 +148,8 @@ def _router_fallback(state: AgentState) -> dict:
         requested_fields.append("title")
     if "manager" in msg:
         requested_fields.append("manager")
+    if any(k in msg for k in ["who reports to", "direct reports", "org chart", "reports to"]):
+        requested_fields.append("direct_reports")
     if any(k in msg for k in [
         "still works here", "currently active", "active status", "still active",
         "terminated", "no longer works", "left the company", "still employed",

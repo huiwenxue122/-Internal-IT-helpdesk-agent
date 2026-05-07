@@ -28,6 +28,7 @@ _FIELD_LABELS: dict[str, str] = {
     "work_phone": "Work phone",
     "employee_id": "Employee ID",
     "employment_status": "Employment status",
+    "direct_reports": "Direct reports",
     "result": "Policy information",
     "query_type": "Query type",
     "status": "Status",
@@ -192,6 +193,24 @@ def _response_fallback(state: AgentState) -> str:  # noqa: C901
             resp = f"{name_part} is currently {status}."
             if cite_part:
                 resp += f" This limited confirmation is allowed under {cite_part}."
+            return resp
+
+        # Direct reports / org chart
+        if "direct_reports" in (minimal_fields or []) and flat.get("direct_reports") is not None:
+            reports = flat["direct_reports"]
+            if isinstance(reports, list) and reports:
+                if len(reports) == 1:
+                    reports_str = reports[0]
+                elif len(reports) == 2:
+                    reports_str = f"{reports[0]} and {reports[1]}"
+                else:
+                    reports_str = ", ".join(reports[:-1]) + f", and {reports[-1]}"
+            else:
+                reports_str = str(reports) if reports else "no one on record"
+            name_part = f"{emp_name}'s" if emp_name else "Their"
+            resp = f"{name_part} direct reports are {reports_str}."
+            if cite_part:
+                resp += f" This is directory information available under {cite_part}."
             return resp
 
         # HR policy result (PTO, benefits, etc.)

@@ -134,6 +134,7 @@ _DEFAULT_CONSTRAINTS: dict[str, list[str]] = {
 _DIRECTORY_ALLOWED_FIELDS = {
     "employee_id", "name", "department", "title",
     "manager", "office", "work_email", "work_phone",
+    "direct_reports",  # org-chart data, allowed under §3.1
 }
 
 _PERSONAL_FIELDS = {"personal_email", "personal_phone", "home_address"}
