@@ -390,3 +390,9 @@ The system is model-agnostic at the architecture level: LLM agents produce struc
 ## AI Tool Usage
 
 I used ChatGPT and Cursor / Claude Code to brainstorm the architecture, generate implementation prompts, debug retrieval precision, build the evaluation suite, and polish the demo UI. All behaviour was validated with local tests, the evaluation scenario suite, and manual demo runs. Policy enforcement logic, guard conditions, and test assertions were written and reviewed by me.
+
+The full sequence of prompts used to build this project — from Phase 1 deterministic foundations through Phase 5 evaluation, the FastAPI demo API, and the React UI — is recorded in:
+
+**[`docs/build-prompts.md`](docs/build-prompts.md)**
+
+This covers every major architectural decision, implementation phase, debugging session, and refinement, as a complete audit trail of the AI-assisted build process.
