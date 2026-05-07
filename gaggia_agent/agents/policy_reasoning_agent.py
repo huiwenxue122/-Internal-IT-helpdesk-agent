@@ -134,7 +134,7 @@ _DEFAULT_CONSTRAINTS: dict[str, list[str]] = {
 _DIRECTORY_ALLOWED_FIELDS = {
     "employee_id", "name", "department", "title",
     "manager", "office", "work_email", "work_phone",
-    "direct_reports",  # org-chart data, allowed under §3.1
+    "direct_reports",  # org-chart data, allowed under §3.5
 }
 
 _PERSONAL_FIELDS = {"personal_email", "personal_phone", "home_address"}
@@ -466,29 +466,43 @@ def _policy_fallback(state: AgentState) -> dict:  # noqa: C901 (complex by desig
         # mentions personal fields: allow directory fields, block personal fields.
         query = _get_lookup_query(target_entities, "")
         min_fields = dir_requested if dir_requested else ["name", "department", "work_email"]
-        cited: list[str] = ["3.1"]
+
+        # Org-chart / direct-reports queries → cite §3.5 (reporting information) as primary.
+        is_org_chart = any(
+            f in requested_fields for f in ("direct_reports", "org_chart", "reporting_structure")
+        )
+        cited: list[str] = ["3.5"] if is_org_chart else ["3.1"]
+        if not is_org_chart:
+            # Include 3.3 when work contact info will be part of the default response
+            if any(f in ("work_email", "work_phone") for f in requested_fields) or not dir_requested:
+                cited.append("3.3")
         if personal_requested:
             cited.append("3.2")
-        if any(f in ("work_email", "work_phone") for f in requested_fields) or not dir_requested:
-            # Include 3.3 when work contact info will be part of the default response
-            if "3.3" not in cited:
-                cited.append("3.3")
+
+        reasoning = (
+            "Org-chart / reporting information may be shared with verified employees per §3.5."
+            if is_org_chart
+            else (
+                "Directory and work-contact fields may be shared with verified employees per §3.1"
+                + (" and §3.3" if "3.3" in cited else "")
+                + "."
+            )
+        )
+        if personal_requested:
+            reasoning += (
+                " Personal contact information (personal email, phone, home address) is "
+                "blocked per §3.2."
+            )
 
         return {
             "verdict": "allow",
             "cited_sections": cited,
-            "reasoning_summary": (
-                "Directory and work-contact fields may be shared with verified employees per §3.1"
-                + (" and §3.3" if "3.3" in cited else "")
-                + "."
-                + (" Personal contact information (personal email, phone, home address) is "
-                   "blocked per §3.2." if personal_requested else "")
-            ),
+            "reasoning_summary": reasoning,
             "allowed_tool_calls": [
                 {
                     "tool": "lookup_employee",
                     "args": {"query": query or "employee"},
-                    "reason": "Directory lookup",
+                    "reason": "Org-chart / directory lookup",
                 }
             ],
             "blocked_tool_calls": [],
@@ -587,6 +601,41 @@ def _policy_fallback(state: AgentState) -> dict:  # noqa: C901 (complex by desig
                 "output_constraints": _DEFAULT_CONSTRAINTS.copy(),
                 "confidence": "high",
             }
+
+        # ---- Grey + cross-team drive: clarify before any access grant ----
+        # A partially-verified Grey requester claiming to need another team's drive
+        # requires verification before executing any side-effecting grant.
+        # This check runs before the same-team check so it fires even if the
+        # requester claims a matching team but is unverified.
+        if trust_tier == "grey":
+            _KNOWN_DRIVE_TEAMS = {"marketing", "design", "finance", "legal", "engineering", "devops"}
+            referenced_teams = [t for t in _KNOWN_DRIVE_TEAMS if t in user_msg]
+            requester_t = (
+                requester_profile.get("team") or requester_profile.get("department") or ""
+            ).lower()
+            # Cross-team: drive team mentioned is different from requester's verified team,
+            # OR requester is not verified.
+            is_cross_team = bool(
+                referenced_teams and (
+                    not requester_t
+                    or not any(rt == requester_t for rt in referenced_teams)
+                    or not requester_profile.get("verified", True)
+                )
+            )
+            if is_cross_team or not referenced_teams:
+                return {
+                    "verdict": "clarify",
+                    "cited_sections": ["4.2", "1.3"],
+                    "reasoning_summary": (
+                        "Grey-tier requesters require additional verification before "
+                        "cross-team or unverified drive access can be granted per §4.2 and §1.3. "
+                        "Please provide manager or drive-owner approval."
+                    ),
+                    "allowed_tool_calls": [],
+                    "blocked_tool_calls": [],
+                    "output_constraints": _DEFAULT_CONSTRAINTS.copy(),
+                    "confidence": "high",
+                }
 
         # ---- Same-team drive: requester is member of the drive's owning team ----
         _TEAM_DRIVE_MAP = {
@@ -724,6 +773,23 @@ def _validate_decision(raw: dict, state: AgentState) -> dict:
         valid_allowed = [
             c for c in valid_allowed if c.get("tool") == "escalate_to_human"
         ]
+
+    # Consistency fix: if the LLM proposes escalate_to_human but set verdict=deny,
+    # upgrade verdict to "escalate" so the tool_authorization_guard will allow it.
+    # (deny + escalate_to_human is self-contradictory: escalation IS the safe action.)
+    has_escalate_tool = any(c.get("tool") == "escalate_to_human" for c in valid_allowed)
+    if has_escalate_tool and raw.get("verdict") == "deny":
+        raw["verdict"] = "escalate"
+
+    # If the LLM proposed lookup_employee but left the query empty or missing,
+    # substitute the first target entity name from the router so the tool can execute.
+    target_entities: list[dict] = state.get("target_entities") or []
+    canonical_query = _get_lookup_query(target_entities, "")
+    for call in valid_allowed:
+        if call.get("tool") == "lookup_employee":
+            args = call.setdefault("args", {})
+            if not args.get("query") and canonical_query:
+                args["query"] = canonical_query
 
     raw["allowed_tool_calls"] = valid_allowed
 

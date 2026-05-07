@@ -277,6 +277,17 @@ def _get_client() -> LLMClient:
     return _llm_client
 
 
+def _has_structured_tool_output(state: AgentState) -> bool:
+    """Return True when filtered_tool_outputs has a real data payload (not just not_found)."""
+    for entry in (state.get("filtered_tool_outputs") or {}).values():
+        if not isinstance(entry, dict):
+            continue
+        output = entry.get("output", {})
+        if isinstance(output, dict) and output.get("status") != "not_found":
+            return True
+    return False
+
+
 def response_agent(state: AgentState) -> AgentState:
     """
     Response Agent node.
@@ -289,7 +300,18 @@ def response_agent(state: AgentState) -> AgentState:
     client = _get_client()
     fallback_text = _response_fallback(state)
 
-    if client.available():
+    output_constraints: dict = state.get("output_constraints") or {}
+    minimal_fields: list[str] = output_constraints.get("minimal_response_fields") or []
+
+    # Use deterministic fallback directly when the fallback has a precise template
+    # for the requested fields (e.g. direct_reports, work_email, employment_status).
+    # This avoids the LLM misinterpreting structured tool outputs.
+    _DETERMINISTIC_FIELDS = {"direct_reports", "work_email", "employment_status", "result"}
+    use_deterministic = bool(
+        set(minimal_fields) & _DETERMINISTIC_FIELDS and _has_structured_tool_output(state)
+    )
+
+    if client.available() and not use_deterministic:
         raw = client.complete_json(
             system_prompt=_SYSTEM_PROMPT,
             user_prompt=_build_user_prompt(state),

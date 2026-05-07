@@ -152,7 +152,10 @@ def reset_password(employee_id: str) -> dict:
 
 
 def lookup_employee(query: str) -> dict:
-    query_lower = query.lower().strip()
+    # Strip leading/trailing whitespace and common punctuation that LLMs sometimes
+    # append (e.g. a trailing "?" from a question phrasing like "David Kim?").
+    import re as _re
+    query_lower = _re.sub(r"[?!.,;:\"\'\s]+$", "", query).strip().lower()
 
     for emp in _EMPLOYEES:
         if emp["employee_id"].lower() == query_lower:

@@ -21,14 +21,18 @@ def tool_authorization_guard(state: AgentState) -> AgentState:
             trust_tier=trust_tier,
             risk_level=risk_level,
             allowed_tools_by_trust=allowed_tools_by_trust,
+            state=state,
         )
 
         if blocked_reason:
             state["blocked_by_guard"].append(
                 {"tool": tool, "args": args, "blocked_reason": blocked_reason}
             )
-            # Escalate verdict when grey+high-risk forces a block
-            if (
+            # Escalate verdict when grey+high-risk forces a block, or when an
+            # unverified Grey requester is blocked from grant_file_access.
+            if trust_tier == "grey" and tool == "grant_file_access":
+                state["verdict"] = "clarify"
+            elif (
                 trust_tier == "grey"
                 and risk_level == "high"
                 and tool != "escalate_to_human"
@@ -47,6 +51,7 @@ def _check(
     trust_tier: str,
     risk_level: str,
     allowed_tools_by_trust: list[str],
+    state: AgentState | None = None,
 ) -> str | None:
     if verdict not in ("allow", "escalate"):
         return "Policy verdict is not allow or escalate."
@@ -62,5 +67,16 @@ def _check(
 
     if trust_tier == "grey" and risk_level == "high" and tool != "escalate_to_human":
         return "Team Grey high-risk actions require clarification or escalation."
+
+    # Grey users may not execute grant_file_access unless explicitly verified.
+    # Unverified / partially-verified Grey requesters cannot self-approve drive access.
+    if trust_tier == "grey" and tool == "grant_file_access":
+        requester_profile = (state or {}).get("requester_profile") or {}
+        # verified=True must be explicitly set; absence or False blocks the grant.
+        if not requester_profile.get("verified", False):
+            return (
+                "Grey-tier unverified requester cannot execute grant_file_access. "
+                "Manager or drive-owner approval required (§4.2)."
+            )
 
     return None
