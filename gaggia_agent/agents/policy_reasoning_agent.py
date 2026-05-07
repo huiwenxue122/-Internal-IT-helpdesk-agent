@@ -735,6 +735,67 @@ def _policy_fallback(state: AgentState) -> dict:  # noqa: C901 (complex by desig
 
 
 # ---------------------------------------------------------------------------
+# Citation / tool-call finalizer (runs on both LLM and deterministic paths)
+# ---------------------------------------------------------------------------
+
+def _add_unique(existing: list, values: list) -> list:
+    out = list(existing or [])
+    for v in values:
+        if v and v not in out:
+            out.append(v)
+    return out
+
+
+def _finalize_policy_state(state: dict) -> dict:
+    """
+    Apply deterministic citation and tool-call rules that must hold regardless
+    of whether the LLM or the fallback produced the initial decision.
+
+    Rules (non-negotiable):
+    1. claimed_authority in adversarial_signals → cite §7.3.
+    2. employee_hr_data_lookup + employment_status + allow → cite §5.2 and §5.4.
+    3. general_hr_policy_question + allow → ensure query_hr_database(query_type=policy)
+       is in allowed_tool_calls.
+    """
+    adversarial = state.get("adversarial_signals") or []
+    intent = state.get("intent", "")
+    requested_fields = state.get("requested_fields") or []
+    verdict = state.get("verdict", "")
+
+    # Rule 1: claimed authority must always cite §7.3
+    if "claimed_authority" in adversarial:
+        state["cited_sections"] = _add_unique(state.get("cited_sections", []), ["7.3"])
+
+    # Rule 2: manager active-status exception → cite base restriction §5.2 + exception §5.4
+    if (
+        intent == "employee_hr_data_lookup"
+        and "employment_status" in requested_fields
+        and verdict == "allow"
+    ):
+        state["cited_sections"] = _add_unique(
+            state.get("cited_sections", []), ["5.2", "5.4"]
+        )
+
+    # Rule 3: general HR policy allow → must have query_hr_database(query_type=policy)
+    if intent == "general_hr_policy_question" and verdict == "allow":
+        calls: list = list(state.get("allowed_tool_calls") or [])
+        has_policy_query = any(
+            c.get("tool") == "query_hr_database"
+            and c.get("args", {}).get("query_type") == "policy"
+            for c in calls
+        )
+        if not has_policy_query:
+            calls.append({
+                "tool": "query_hr_database",
+                "args": {"query_type": "policy"},
+                "reason": "General HR policy question (§5.1)",
+            })
+        state["allowed_tool_calls"] = calls
+
+    return state
+
+
+# ---------------------------------------------------------------------------
 # Output validation / hardening
 # ---------------------------------------------------------------------------
 
@@ -780,6 +841,18 @@ def _validate_decision(raw: dict, state: AgentState) -> dict:
     has_escalate_tool = any(c.get("tool") == "escalate_to_human" for c in valid_allowed)
     if has_escalate_tool and raw.get("verdict") == "deny":
         raw["verdict"] = "escalate"
+
+    # Fix 2: For employee_directory_lookup, the LLM sometimes blanket-denies when a
+    # request mixes allowed directory fields with forbidden personal fields.
+    # The correct behavior is a partial allow (run lookup, redact personal fields).
+    # If the LLM returned deny and there are no adversarial signals, use the
+    # deterministic fallback which handles the mixed case correctly.
+    if (
+        raw.get("verdict") == "deny"
+        and state.get("intent") == "employee_directory_lookup"
+        and not (state.get("adversarial_signals") or [])
+    ):
+        return _policy_fallback(state)
 
     # If the LLM proposed lookup_employee but left the query empty or missing,
     # substitute the first target entity name from the router so the tool can execute.
@@ -865,12 +938,22 @@ def policy_reasoning_agent(state: AgentState) -> AgentState:
     else:
         decision = _policy_fallback(state)
 
+    # Merge router context needed by the finalizer (intent, requested_fields
+    # come from the router, not the policy agent's own output).
+    merged: dict = {
+        **decision,
+        "intent": state.get("intent", decision.get("intent", "")),
+        "requested_fields": state.get("requested_fields", decision.get("requested_fields", [])),
+        "adversarial_signals": state.get("adversarial_signals", decision.get("adversarial_signals", [])),
+    }
+    merged = _finalize_policy_state(merged)
+
     return {
         **state,
-        "verdict": decision.get("verdict", "clarify"),
-        "cited_sections": decision.get("cited_sections", []),
-        "reasoning_summary": decision.get("reasoning_summary", ""),
-        "allowed_tool_calls": decision.get("allowed_tool_calls", []),
-        "blocked_tool_calls": decision.get("blocked_tool_calls", []),
-        "output_constraints": decision.get("output_constraints", _DEFAULT_CONSTRAINTS.copy()),
+        "verdict": merged.get("verdict", "clarify"),
+        "cited_sections": merged.get("cited_sections", []),
+        "reasoning_summary": merged.get("reasoning_summary", ""),
+        "allowed_tool_calls": merged.get("allowed_tool_calls", []),
+        "blocked_tool_calls": merged.get("blocked_tool_calls", []),
+        "output_constraints": merged.get("output_constraints", _DEFAULT_CONSTRAINTS.copy()),
     }

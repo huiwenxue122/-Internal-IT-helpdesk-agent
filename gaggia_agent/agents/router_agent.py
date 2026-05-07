@@ -283,16 +283,35 @@ def _router_fallback(state: AgentState) -> dict:
     }
 
 
+_EMPLOYMENT_STATUS_PHRASES = (
+    "still active", "currently active", "is active", "active status",
+    "still works here", "still work here", "still employed",
+    "employment status", "former employee", "terminated",
+    "confirm whether", "no longer works", "left the company",
+)
+
+
 def _validate_routing(raw: dict, state: AgentState) -> dict:
     """
     Validate and normalise an LLM-produced routing dict.
     Falls back field-by-field to heuristics if values are invalid.
     """
     fallback = _router_fallback(state)
+    msg = (state.get("user_message") or "").lower()
 
     intent = raw.get("intent", "")
     if intent not in VALID_INTENTS:
         raw["intent"] = fallback["intent"]
+
+    # Fix 4: Employment-status phrases must always route to employee_hr_data_lookup,
+    # even if the LLM chose employee_directory_lookup.  This is a hard semantic rule:
+    # active/employment status is HR data (§5.2/§5.4), not directory data (§3.1).
+    if any(phrase in msg for phrase in _EMPLOYMENT_STATUS_PHRASES):
+        raw["intent"] = "employee_hr_data_lookup"
+        fields: list = list(raw.get("requested_fields") or [])
+        if "employment_status" not in fields:
+            fields.append("employment_status")
+        raw["requested_fields"] = fields
 
     risk = raw.get("risk_level", "")
     if risk not in VALID_RISK_LEVELS:
