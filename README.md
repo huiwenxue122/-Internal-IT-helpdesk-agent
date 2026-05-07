@@ -251,12 +251,38 @@ The UI includes all 21 official take-home test scenarios as request templates, g
 
 ## Known Limitations
 
-- **Mock tools only.** `reset_password`, `grant_file_access`, `lookup_employee`, `query_hr_database`, and `escalate_to_human` simulate IT side effects — they do not connect to real systems.
-- **Deterministic fallback is less flexible than a live LLM.** Keyword-based intent classification and entity extraction can misclassify unusual phrasings.
-- **Neo4j is optional.** The in-memory graph fallback is used by default and has identical rule coverage, but loses persistence across restarts.
-- **ChromaDB can fall back to lexical retrieval.** Semantic recall may differ slightly.
-- **Finite evaluation coverage.** The evaluation suite exercises the included scenarios. Novel requests may trigger edge cases not covered by the current heuristics.
-- **Some conservative denials are intentional.** Security-critical ambiguity (e.g., unverified authority claims, Grey-tier file access) produces `clarify` or `escalate` rather than a potentially incorrect `allow`.
+- Tools are mocks and do not integrate with real IT systems.
+- The evaluation suite is finite and does not prove universal policy correctness.
+- Multi-turn probing is scaffolded in `AgentState` but not fully implemented in the evaluation scenarios.
+- The high-risk rule graph is hand-modelled for security-critical sections rather than fully auto-extracted from policy text.
+- Neo4j and ChromaDB have local fallbacks for reproducibility; production deployments need those services running.
+
+---
+
+## What I Would Improve With More Time
+
+This submission focuses on making policy enforcement inspectable, testable, and safe for the provided single-turn scenarios. With more time, I would extend it in the following directions:
+
+1. **Multi-turn risk tracking**  
+   The current system supports `conversation_history` in state, but the demo primarily evaluates single-turn requests. I would add a LangGraph checkpointer and track repeated probing behaviour — a user rephrasing denied HR-data requests, applying social pressure after a denial, or attempting to bypass escalation. Repeated policy-probing would increase risk level and trigger escalation sooner.
+
+2. **Policy versioning and rule-authoring workflow**  
+   The current policy layer combines an expanded Markdown document with hand-modelled `PolicyRule` objects. In production, I would add policy version IDs, rule provenance, validation checks, and a lightweight rule-authoring workflow so Legal and Security teams can update high-risk rules without changing agent code.
+
+3. **Real IT integrations behind the same guard layer**  
+   Mock tools are side-effect-safe by design. I would replace them with real integrations for identity management, directory lookup, ticketing, and file-access systems, while keeping the same `TOOL_REGISTRY`, deterministic authorization guard, and output-filtering layer. The agent would still propose actions; execution authority would remain outside the LLM.
+
+4. **Broader adversarial evaluation and fuzzing**  
+   The suite covers all 21 official scenarios plus 16 regression cases. I would expand this with automated adversarial fuzzing for prompt injection, claimed authority, urgency pressure, multi-turn probing, and data-exfiltration attempts. New failures would immediately become regression scenarios.
+
+5. **Cost, latency, and observability reporting**  
+   LangSmith traces already make node-level execution visible. I would add automated reporting for per-request latency, LLM call count, token usage, retrieval latency, tool latency, and estimated cost — making the tradeoff between multi-agent inspectability and single-agent latency measurable.
+
+6. **Production-grade policy graph backend**  
+   The demo can fall back to an in-memory rule graph. For production, I would run Neo4j as the primary backend, add health checks, cache graph expansions, and support schema migrations as policy evolves.
+
+7. **Human review feedback loop**  
+   Escalated cases create mock tickets today. In production, I would capture reviewer outcomes and use them to identify ambiguous policy areas, update rules, and generate new evaluation scenarios automatically.
 
 ---
 
