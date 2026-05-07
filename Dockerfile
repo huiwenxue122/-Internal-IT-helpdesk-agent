@@ -32,5 +32,7 @@ COPY --from=frontend /app/demo_ui/dist ./demo_ui/dist
 
 EXPOSE 8000
 
-# PORT env var lets Render/Fly/Railway inject their preferred port.
-CMD ["sh", "-c", "uvicorn demo_api.app:app --host 0.0.0.0 --port ${PORT:-8000}"]
+# Build the in-memory policy index on every cold start, then launch the server.
+# This ensures ChromaDB (or its lexical fallback) is ready before the first request.
+# CHROMA_PERSIST_PATH can be set to /tmp/chroma_db on platforms with ephemeral disks.
+CMD ["sh", "-c", "python scripts/build_policy_index.py && uvicorn demo_api.app:app --host 0.0.0.0 --port ${PORT:-8000}"]
