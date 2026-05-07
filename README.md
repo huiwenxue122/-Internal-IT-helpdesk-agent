@@ -27,11 +27,24 @@ The UI separates three concerns:
 
 This separation lets you run the same request under Blue, Grey, or Red trust tiers and compare how the policy enforcement changes.
 
+**Prerequisites for the web UI:** Python 3.11+ and **Node.js** (18+ is fine; Node 20 matches the Docker frontend build stage). API-only checks work with Python alone: `curl http://localhost:8000/api/health` after starting uvicorn without a frontend build.
+
+**Fastest way to see the Policy Console locally:** use **[Local production mode](#local-production-mode-single-process)** (build `demo_ui`, then one uvicorn process on port 8000). For day-to-day frontend work, use **[Local dev mode](#local-dev-mode-two-terminals)** instead.
+
+#### ASGI entrypoint (same app, two import paths)
+
+There is a single FastAPI application. It is defined in `demo_api/app.py`. The `app/main.py` module **re-exports** that same `app` object so Docker and short module paths can use `app.main:app` without changing behaviour.
+
+- **Recommended (matches Dockerfile / Render image):** `uvicorn app.main:app ...`
+- **Equivalent:** `uvicorn demo_api.app:app ...`
+
+Either form serves the demo API (`/api/health`, `/api/scenarios`, `/api/run-agent` and the same unprefixed aliases) plus the React production build from `demo_ui/dist/` when present.
+
 ### Local dev mode (two terminals)
 
 ```bash
 # Terminal 1 — backend
-uvicorn demo_api.app:app --reload --port 8000
+uvicorn app.main:app --reload --port 8000
 
 # Terminal 2 — frontend
 cd demo_ui
@@ -46,37 +59,60 @@ Open http://localhost:5173
 ```bash
 npm --prefix demo_ui install
 npm --prefix demo_ui run build
-uvicorn demo_api.app:app --host 0.0.0.0 --port 8000
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1
 ```
 
 Open http://localhost:8000
 
 ### Docker
 
+The image `CMD` starts the same ASGI app as above:
+
+`uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1`
+
 ```bash
 docker build -t gaggia-agent .
 docker run --env-file .env -p 8000:8000 gaggia-agent
 ```
+
+No `.env` yet? Copy `cp .env.example .env` (leave values blank — all optional), or omit the flag: `docker run -p 8000:8000 gaggia-agent`.
 
 Open http://localhost:8000
 
 ---
 ## Quickstart
 
+Clone the repo, then:
+
+- **Run tests / eval (Python only):** follow the first block below.
+- **Run the Policy Console in a browser:** skip to **[Demo](#demo)** → *Local production mode* (needs Node for `npm run build`) or *Docker*. Same ASGI app as production: `uvicorn app.main:app` (equivalent to `uvicorn demo_api.app:app`).
+
 ```bash
 python -m venv .venv
-source .venv/bin/activate        # Windows: .venv\Scripts\activate
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
+
+# Optional: semantic Chroma index (only if RETRIEVER_BACKEND=chroma).
+# Default tests and local runs use keyword retrieval — no offline build needed.
+# python scripts/build_policy_index.py
 
 # Run the test suite
 pytest -q
 
-# Run the local demo server
-uvicorn demo_api.app:app --host 0.0.0.0 --port 8000 --workers 1
+# Run the evaluation suite (21 official + 16 regression scenarios)
+python scripts/run_eval.py --all
 ```
-Open http://localhost:8000
 
-No API key, Neo4j instance, Chroma index, or policy-index build step is required for the default mode. The default runtime uses keyword retrieval, an in-memory policy graph, and deterministic policy guards.
+**Run the bundled demo server locally** (after `npm --prefix demo_ui install && npm --prefix demo_ui run build`; without a build you still get `/api/*`, but not the React SPA at `/`):
+
+```bash
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1
+```
+
+Then open http://localhost:8000 .
+
+No API key, Neo4j instance, Chroma index, or policy-index build step is required for the default mode (keyword retrieval, in-memory policy graph, deterministic fallbacks). See **[Demo](#demo)** for two-terminal dev mode (`npm run dev` + `--reload`) and **[Deployment](#deployment)** for Docker / Render.
+
 ---
 
 ## Environment Variables
@@ -133,11 +169,13 @@ uvicorn app.main:app --reload --port 8000
 
 **Render / production**
 
-Start command (single worker, no reload, no offline index builder in lifecycle):
+This matches the **`Dockerfile` `CMD`** (single worker, no `--reload`, no offline index builder in lifecycle):
 
 ```bash
 uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 1
 ```
+
+In Docker, Render sets `$PORT` automatically; locally use `8000` or `$PORT` as needed.
 
 Fallback behaviour when keys are absent:
 - No `ANTHROPIC_API_KEY` → deterministic routing and policy reasoning (all tests pass in this mode)
@@ -338,11 +376,15 @@ This submission focuses on making policy enforcement inspectable, testable, and 
 
 ### Option A — Docker (local)
 
+Uses the same entrypoint as production: **`uvicorn app.main:app`** (see Dockerfile `CMD`).
+
 ```bash
 docker build -t gaggia-agent .
 docker run --env-file .env -p 8000:8000 gaggia-agent
 open http://localhost:8000
 ```
+
+No `.env` yet? Run `cp .env.example .env` (values can stay empty) or use `docker run -p 8000:8000 gaggia-agent` without `--env-file`.
 
 ### Option B — Render
 
@@ -350,10 +392,12 @@ open http://localhost:8000
 2. Create a new **Web Service** on [Render](https://render.com).
 3. Select **Docker** as the environment (Render auto-detects the `Dockerfile`).
 4. Add environment variables in the Render dashboard (see the table above).
-5. Deploy. Render builds the image and starts the service.
+5. Deploy. Render builds the image and starts the container with the Dockerfile `CMD` — **`uvicorn app.main:app`** on `$PORT` (same ASGI application as local “production mode” above).
 6. Open the Render-provided URL.
 
 A `render.yaml` blueprint is included for infrastructure-as-code setup.
+
+> **Tip:** Override the Start Command only if you know what you are doing — the shipped image expects `app.main:app` (which is `demo_api.app:app`).
 
 **Important:**
 - Never commit `.env`. Set API keys via Render's environment variable dashboard.
@@ -386,6 +430,9 @@ python -m gaggia_agent.main \
 
 # Check which backends are active
 python scripts/check_backends.py
+
+# Demo API (production-style — build UI first; same as Dockerfile)
+# uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1
 ```
 
 ---
@@ -393,6 +440,7 @@ python scripts/check_backends.py
 ## Project Structure
 
 ```
+app/               ASGI shim — re-exports demo_api.app:app (Docker / `uvicorn app.main:app`)
 gaggia_agent/
   agents/          router_agent, policy_reasoning_agent, response_agent
   llm/             Anthropic client with deterministic fallback
@@ -403,7 +451,7 @@ gaggia_agent/
   runner.py        run_agent() entrypoint
   graph.py         LangGraph StateGraph assembly
 
-demo_api/          FastAPI backend (serves /api/* + React SPA in production)
+demo_api/          FastAPI application module (defines `app`; `/api/*` + React SPA in production)
 demo_ui/           React Vite frontend (GaggiaAgent Policy Console)
 tests/             pytest unit + integration tests
 scripts/           CLI utilities

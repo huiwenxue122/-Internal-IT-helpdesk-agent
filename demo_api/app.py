@@ -5,8 +5,9 @@ Wraps gaggia_agent.runner.run_agent() and exposes a sanitized HTTP interface.
 Raw tool outputs are never returned. Sensitive field values are redacted before
 any data leaves the server.
 
-Run:
-    uvicorn demo_api.app:app --reload --port 8000
+Run (same FastAPI instance as ``app.main:app``):
+    uvicorn app.main:app --reload --port 8000
+    # or: uvicorn demo_api.app:app --reload --port 8000
 """
 from __future__ import annotations
 
