@@ -72,10 +72,11 @@ pip install -r requirements.txt
 pytest -q
 
 # Run the local demo server
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1
+uvicorn demo_api.app:app --host 0.0.0.0 --port 8000 --workers 1
 ```
-No API key is needed to run tests or the evaluation suite. The agent falls back to deterministic logic automatically.
+Open http://localhost:8000
 
+No API key, Neo4j instance, Chroma index, or policy-index build step is required for the default mode. The default runtime uses keyword retrieval, an in-memory policy graph, and deterministic policy guards.
 ---
 
 ## Environment Variables
