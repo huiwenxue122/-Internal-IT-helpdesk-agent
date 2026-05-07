@@ -100,21 +100,7 @@ Fallback behaviour when keys are absent:
 
 ## Architecture
 
-```
-User request
-  → Router Agent
-  → Trust Tier Guard
-  → Policy Retriever
-       ├─ ChromaDB / lexical  (section-level semantic search)
-       └─ Neo4j / in-memory   (high-risk rule graph traversal)
-  → Conflict Detector
-  → Policy Reasoning Agent
-  → Conditional route
-       allow / escalate  →  Tool Authorization Guard → Tool Executor → Output Filter
-       deny / clarify    →  Response Agent
-  → Response Agent
-  → Decision Logger
-```
+![GaggiaAgent architecture diagram](docs/architecture.png)
 
 ### Component roles
 
