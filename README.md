@@ -298,6 +298,21 @@ logs/              Decision audit log (decisions.jsonl, gitignored)
 
 ---
 
+## Models Used
+
+**Runtime LLM:**
+- Hosted demo: Anthropic Claude Sonnet 4 (`claude-sonnet-4-20250514`)
+- Local tests / evaluation: deterministic fallback — works without an API key
+
+**Embedding / retrieval:**
+- Section retrieval: `sentence-transformers/all-MiniLM-L6-v2` via ChromaDB `DefaultEmbeddingFunction` (local, no API key required)
+- Lexical fallback: token-overlap scoring when ChromaDB or embeddings are unavailable
+- High-risk rule graph: Neo4j if credentials are configured; in-memory graph fallback otherwise
+
+The system is model-agnostic at the architecture level: LLM agents produce structured JSON proposals, while deterministic guards enforce trust tier, tool authorization, and output filtering independently of any model.
+
+---
+
 ## AI Tool Usage
 
 I used ChatGPT and Cursor / Claude Code to brainstorm the architecture, generate implementation prompts, debug retrieval precision, build the evaluation suite, and polish the demo UI. All behaviour was validated with local tests, the evaluation scenario suite, and manual demo runs. Policy enforcement logic, guard conditions, and test assertions were written and reviewed by me.
