@@ -12,7 +12,7 @@ Product demo: https://internal-it-helpdesk-agent.onrender.com
 
 > **Note:** Hosted on Render's free tier and may cold-start after inactivity. The first request can take a few minutes to respond; subsequent requests are faster.
 
-> **How to use:** Choose one test scenarios -> click "Use suggested context" -> click "Run the agent"
+> **How to use:** Choose one from test scenarios -> click "Use suggested context" -> click "Run the agent"
 
 ---
 
