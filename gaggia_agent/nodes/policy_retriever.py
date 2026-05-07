@@ -1,23 +1,60 @@
 from __future__ import annotations
 
-from gaggia_agent.policy.chroma_index import build_chroma_index, query_chroma_with_metadata, _lexical_index
+import os
+
+from gaggia_agent.policy.chroma_index import (
+    build_lexical_only,
+    hydrate_lexical_cache_from_policy,
+    query_chroma_with_metadata,
+    require_runtime_chroma_index,
+    set_using_lexical,
+    _lexical_index,
+)
 from gaggia_agent.policy.policy_graph import get_policy_graph_with_metadata
 from gaggia_agent.state import AgentState
+
+# ---------------------------------------------------------------------------
+# Backend selection
+#
+# RETRIEVER_BACKEND=keyword  (default, Render-safe)
+#   Uses a pure-Python keyword/lexical index.  No chromadb, no ONNX model.
+#
+# RETRIEVER_BACKEND=chroma
+#   Uses ChromaDB with sentence-transformer embeddings.  Requires the index
+#   to have been built offline via  python scripts/build_policy_index.py .
+#   If the index is missing, raises a clear error rather than building it
+#   during web startup (which would exceed memory on small instances).
+# ---------------------------------------------------------------------------
+
+_RETRIEVER_BACKEND: str = os.getenv("RETRIEVER_BACKEND", "keyword").lower()
+
+
+def _ensure_section_index() -> None:
+    """Populate the in-process section index if empty."""
+    if _lexical_index._docs:
+        return  # already loaded
+    if _RETRIEVER_BACKEND == "chroma":
+        require_runtime_chroma_index()
+        set_using_lexical(False)
+        hydrate_lexical_cache_from_policy()
+    else:
+        # Keyword mode (default): load the lexical index only.
+        build_lexical_only()
 
 
 def policy_retriever(state: AgentState) -> AgentState:
     """
     Populate state with a Policy Evidence Bundle.
 
-    Queries ChromaDB (or lexical fallback) for relevant policy sections, then
-    queries the policy graph (Neo4j or in-memory fallback) for high-risk rules
-    and expands related rules through the graph relationship network.
-    No LLM calls are made.
+    Section retrieval backend is controlled by the RETRIEVER_BACKEND env var:
+      keyword (default) — pure Python lexical matching, Render-safe
+      chroma            — ChromaDB with sentence-transformer embeddings
 
-    Populates state["retrieval_metadata"] with backend observability info:
-      section_backend, graph_backend, neo4j_available,
-      sections_returned, rules_returned, graph_expanded_rules_returned,
-      retrieval_query
+    Policy graph backend is controlled by POLICY_GRAPH_BACKEND:
+      memory (default) — in-memory rule graph, no Neo4j connection
+      neo4j            — Neo4j AuraDB (requires NEO4J_URI/USERNAME/PASSWORD)
+
+    Populates state["retrieval_metadata"] with backend observability info.
     """
     # -----------------------------------------------------------------------
     # 1. Build retrieval query (compact, no raw sensitive values)
@@ -40,12 +77,17 @@ def policy_retriever(state: AgentState) -> AgentState:
     query = " ".join(query_parts)
 
     # -----------------------------------------------------------------------
-    # 2. ChromaDB / lexical section retrieval
+    # 2. Section retrieval (keyword or Chroma)
     # -----------------------------------------------------------------------
-    if not _lexical_index._docs:
-        build_chroma_index()
+    _ensure_section_index()
+    raw_sections, section_meta = query_chroma_with_metadata(
+        query,
+        k=6,
+        allow_auto_build=(_RETRIEVER_BACKEND != "chroma"),
+    )
 
-    raw_sections, section_meta = query_chroma_with_metadata(query, k=6)
+    # Annotate metadata with active backend name
+    section_meta.setdefault("section_backend", _RETRIEVER_BACKEND)
     retrieved_sections: list[dict] = []
     seen_section_ids: set[str] = set()
     for sec in raw_sections:
@@ -58,7 +100,7 @@ def policy_retriever(state: AgentState) -> AgentState:
     # -----------------------------------------------------------------------
     # 3. Policy graph rule retrieval
     # -----------------------------------------------------------------------
-    graph, graph_meta = get_policy_graph_with_metadata(prefer_neo4j=True)
+    graph, graph_meta = get_policy_graph_with_metadata()
 
     direct_rules = graph.find_rules_for_query_context(
         intent=state.get("intent", ""),

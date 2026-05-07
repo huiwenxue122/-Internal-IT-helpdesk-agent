@@ -98,6 +98,72 @@ def _try_get_collection(client: Any, reset: bool) -> Any:
 # Public API
 # ---------------------------------------------------------------------------
 
+def set_using_lexical(value: bool) -> None:
+    """Expose lexical-backend mode toggle for policy_retriever orchestration."""
+    global _using_lexical
+    _using_lexical = value
+
+
+def hydrate_lexical_cache_from_policy(policy_path: str | None = None) -> int:
+    """
+    Populate the in-memory lexical overlap index from policy markdown WITHOUT
+    changing _using_lexical.  Used in chroma mode so query_chroma_with_metadata
+    has a corpus for exception fallback, while still attempting Chroma first.
+    """
+    from gaggia_agent.policy.section_parser import _POLICY_PATH  # type: ignore
+
+    path = policy_path or _POLICY_PATH
+    sections = parse_policy_markdown(path)
+    _lexical_index.add_sections(sections)
+    return len(sections)
+
+
+def chroma_policy_collection_ready(persist_path: str | None = None) -> bool:
+    """
+    Return True iff a persisted Chroma collection exists and has rows.
+    Does not trigger index building or ONNX downloads beyond opening the DB.
+    """
+    try:
+        client = _try_get_chroma_client(persist_path or _DEFAULT_PERSIST_PATH)
+        try:
+            coll = client.get_collection(name=_COLLECTION_NAME)
+        except Exception:
+            return False
+        return coll.count() > 0
+    except Exception:
+        return False
+
+
+def require_runtime_chroma_index(persist_path: str | None = None) -> None:
+    """Raise RuntimeError when RETRIEVER_BACKEND=chroma but no pre-built index exists."""
+    pp = persist_path or _DEFAULT_PERSIST_PATH
+    if not chroma_policy_collection_ready(pp):
+        raise RuntimeError(
+            f"No usable Chroma collection '{_COLLECTION_NAME}' at persist path {pp!r}. "
+            "Build the index offline (not during web startup) with:\n"
+            "  python scripts/build_policy_index.py\n"
+            "Ensure CHROMA_PERSIST_PATH matches the path used at build time."
+        )
+
+
+def build_lexical_only(policy_path: str | None = None) -> int:
+    """
+    Build the in-process lexical index from the policy markdown without
+    importing chromadb or downloading any ONNX model.
+
+    Safe to call in deployment environments with tight memory limits.
+    Sets _using_lexical = True so subsequent queries always use the fast path.
+    """
+    global _using_lexical
+    from gaggia_agent.policy.section_parser import _POLICY_PATH  # type: ignore
+
+    path = policy_path or _POLICY_PATH
+    sections = parse_policy_markdown(path)
+    _lexical_index.add_sections(sections)
+    _using_lexical = True
+    return len(sections)
+
+
 def get_chroma_client(persist_path: str | None = None) -> Any:
     path = persist_path or _DEFAULT_PERSIST_PATH
     return _try_get_chroma_client(path)
@@ -167,6 +233,7 @@ def query_chroma_with_metadata(
     query: str,
     k: int = 6,
     persist_path: str | None = None,
+    allow_auto_build: bool = True,
 ) -> tuple[List[dict], dict]:
     """
     Query the section index and return (results, backend_metadata).
@@ -188,14 +255,15 @@ def query_chroma_with_metadata(
             "reason": "ChromaDB unavailable or embedding failed",
         }
 
-    # Cold start — build index
+    # Cold start — optionally populate index (skipped when allow_auto_build=False)
     if not _lexical_index._docs:
-        build_chroma_index(persist_path=path)
-        if _using_lexical:
-            return _lexical_index.query(query, k=k), {
-                "section_backend": "lexical_fallback",
-                "reason": "ChromaDB unavailable at index build time",
-            }
+        if allow_auto_build:
+            build_chroma_index(persist_path=path)
+            if _using_lexical:
+                return _lexical_index.query(query, k=k), {
+                    "section_backend": "lexical_fallback",
+                    "reason": "ChromaDB unavailable at index build time",
+                }
 
     try:
         client = _try_get_chroma_client(path)

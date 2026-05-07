@@ -1,23 +1,38 @@
 from __future__ import annotations
 
+import os
+
 from gaggia_agent.policy.high_risk_rules import HIGH_RISK_RULES
 from gaggia_agent.policy.in_memory_graph import InMemoryPolicyGraph
-from gaggia_agent.policy.neo4j_graph import Neo4jPolicyGraph
+
+# ---------------------------------------------------------------------------
+# Backend selection
+#
+# POLICY_GRAPH_BACKEND=memory  (default, Render-safe)
+#   In-process rule graph.  No network connection, no external credentials.
+#
+# POLICY_GRAPH_BACKEND=neo4j
+#   Neo4j AuraDB.  Requires NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD.
+#   If the connection fails, falls back to in-memory automatically.
+# ---------------------------------------------------------------------------
+
+_GRAPH_BACKEND: str = os.getenv("POLICY_GRAPH_BACKEND", "memory").lower()
 
 
-def get_policy_graph(prefer_neo4j: bool = True):
+def get_policy_graph(prefer_neo4j: bool | None = None):
     """
-    Return a policy graph backed by Neo4j when credentials are present and the
-    connection succeeds; otherwise fall back to the in-memory implementation.
+    Return a policy graph.  Backend is controlled by POLICY_GRAPH_BACKEND env var.
 
-    The returned object satisfies the same interface as both Neo4jPolicyGraph
-    and InMemoryPolicyGraph.
+    prefer_neo4j is accepted for backwards-compatibility but is overridden by
+    the env var when POLICY_GRAPH_BACKEND is explicitly set.
     """
     graph, _ = get_policy_graph_with_metadata(prefer_neo4j=prefer_neo4j)
     return graph
 
 
-def get_policy_graph_with_metadata(prefer_neo4j: bool = True) -> tuple[object, dict]:
+def get_policy_graph_with_metadata(
+    prefer_neo4j: bool | None = None,
+) -> tuple[object, dict]:
     """
     Return (graph, metadata) where metadata describes the active backend.
 
@@ -26,7 +41,10 @@ def get_policy_graph_with_metadata(prefer_neo4j: bool = True) -> tuple[object, d
       neo4j_available: bool
       rules_loaded   : int
     """
-    if prefer_neo4j:
+    # Explicit opt-in only (Render default POLICY_GRAPH_BACKEND=memory is safe).
+    # prefer_neo4j kwarg ignored — use POLICY_GRAPH_BACKEND=neo4j instead.
+    if _GRAPH_BACKEND == "neo4j":
+        from gaggia_agent.policy.neo4j_graph import Neo4jPolicyGraph  # lazy import
         graph = Neo4jPolicyGraph()
         if graph.available():
             graph.load_rules(HIGH_RISK_RULES)
@@ -36,6 +54,7 @@ def get_policy_graph_with_metadata(prefer_neo4j: bool = True) -> tuple[object, d
                 "rules_loaded": len(HIGH_RISK_RULES),
             }
         graph.close()
+        # Fall through to in-memory on connection failure
 
     mem_graph = InMemoryPolicyGraph(rules=HIGH_RISK_RULES)
     return mem_graph, {

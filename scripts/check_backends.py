@@ -39,15 +39,31 @@ def _check_llm() -> None:
 
 
 def _check_chroma() -> None:
-    from gaggia_agent.policy.chroma_index import query_chroma_with_metadata, build_chroma_index, _lexical_index
+    from gaggia_agent.policy import chroma_index as ci
     chroma_path = os.environ.get("CHROMA_PERSIST_PATH", "./chroma_db")
     path_exists = os.path.isdir(chroma_path)
+    rb = os.environ.get("RETRIEVER_BACKEND", "keyword").lower()
+    print(f"RETRIEVER_BACKEND env: {rb}")
 
-    # Ensure the index is initialised.
-    if not _lexical_index._docs:
-        build_chroma_index()
+    if rb == "keyword":
+        ci.build_lexical_only()
+    elif rb == "chroma":
+        if not ci.chroma_policy_collection_ready(chroma_path):
+            print(f"Section backend: chroma REQUIRED but index missing at {chroma_path!r}")
+            print("  Run: python scripts/build_policy_index.py")
+            print(f"Chroma dir exists: {path_exists}")
+            return
+        ci.set_using_lexical(False)
+        ci.hydrate_lexical_cache_from_policy()
+    else:
+        print(f"Unknown RETRIEVER_BACKEND={rb!r}; probing with keyword semantics")
+        ci.build_lexical_only()
 
-    _, meta = query_chroma_with_metadata("test query", k=1)
+    _, meta = ci.query_chroma_with_metadata(
+        "test query",
+        k=1,
+        allow_auto_build=(rb != "chroma"),
+    )
     backend = meta.get("section_backend", "unknown")
     print(f"Section backend: {backend}")
     if backend == "chroma":
@@ -63,7 +79,8 @@ def _check_chroma() -> None:
 
 def _check_graph() -> None:
     from gaggia_agent.policy.policy_graph import get_policy_graph_with_metadata
-    _, meta = get_policy_graph_with_metadata(prefer_neo4j=True)
+    print(f"POLICY_GRAPH_BACKEND env: {os.environ.get('POLICY_GRAPH_BACKEND', 'memory')}")
+    _, meta = get_policy_graph_with_metadata()
     print(f"Graph backend:  {meta.get('graph_backend', 'unknown')}")
     print(f"Neo4j available:{meta.get('neo4j_available', False)}")
     print(f"Rules loaded:   {meta.get('rules_loaded', 0)}")

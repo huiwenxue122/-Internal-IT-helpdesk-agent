@@ -369,16 +369,18 @@ app.add_middleware(
 api_router = APIRouter(prefix="/api")
 
 
-@api_router.get("/health", response_model=HealthResponse)
+@api_router.api_route("/health", methods=["GET", "HEAD"], response_model=HealthResponse)
 def health() -> HealthResponse:
-    """Service health check with LLM mode info."""
-    try:
-        from gaggia_agent.llm.client import LLMClient
-        client = LLMClient()
-        model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
-        llm_mode = f"anthropic:{model}" if client.available() else "deterministic_fallback"
-    except Exception:
-        llm_mode = "unknown"
+    """
+    Lightweight service health check.
+
+    Returns immediately without loading the agent, LLM client, Chroma, or Neo4j.
+    Safe to call at any point — including before the first /run-agent request.
+    Supports both GET and HEAD so Render's health-check probes work correctly.
+    """
+    model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
+    has_key = bool(os.environ.get("ANTHROPIC_API_KEY", "").strip())
+    llm_mode = f"anthropic:{model}" if has_key else "deterministic_fallback"
 
     return HealthResponse(
         status="ok",
@@ -480,7 +482,7 @@ def run_agent_endpoint(req: RunAgentRequest) -> AgentResponse:
 app.include_router(api_router)
 
 # Keep unprefixed routes so existing tests and CLI users are unaffected.
-app.add_api_route("/health", health, methods=["GET"], response_model=HealthResponse)
+app.add_api_route("/health", health, methods=["GET", "HEAD"], response_model=HealthResponse)
 app.add_api_route("/scenarios", get_scenarios, methods=["GET"], response_model=list[ScenarioItem])
 app.add_api_route("/run-agent", run_agent_endpoint, methods=["POST"], response_model=AgentResponse)
 

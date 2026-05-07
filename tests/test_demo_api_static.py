@@ -45,6 +45,11 @@ def test_api_health_200():
     assert "llm_mode" in data
 
 
+def test_api_health_head_200():
+    r = client.head("/api/health")
+    assert r.status_code == 200
+
+
 # ---------------------------------------------------------------------------
 # 2. GET /api/scenarios — 21 official scenarios
 # ---------------------------------------------------------------------------

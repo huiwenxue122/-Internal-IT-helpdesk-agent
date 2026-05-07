@@ -10,7 +10,9 @@ GaggiaAgent is a LangGraph-orchestrated policy enforcement agent for internal IT
 
 Product demo: https://internal-it-helpdesk-agent.onrender.com
 
-> **Note:** Hosted on Render's free tier and may cold-start after inactivity. The first request can take 30–60 seconds to respond; subsequent requests are faster.
+> **Note:** Hosted on Render's free tier and may cold-start after inactivity. The first request can take a few minutes to respond; subsequent requests are faster.
+
+> **How to use:**choose one test scenarios -> click "Use suggested context" -> click "Run the agent"
 
 ---
 
@@ -67,8 +69,9 @@ python -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 
-# Build the in-memory policy index (required before first run)
-python scripts/build_policy_index.py
+# Optional: semantic Chroma index (only if RETRIEVER_BACKEND=chroma).
+# Default tests and local runs use keyword retrieval — no offline build needed.
+# python scripts/build_policy_index.py
 
 # Run the test suite
 pytest -q
@@ -92,17 +95,59 @@ Create a `.env` file at the repo root (see `.env.example`). All variables are op
 | `LANGSMITH_API_KEY` | LangSmith trace export | — (tracing disabled) |
 | `LANGSMITH_TRACING` | Enable LangSmith tracing | `false` |
 | `LANGSMITH_PROJECT` | LangSmith project name | `gaggia-agent` |
-| `NEO4J_URI` | Neo4j AuraDB connection URI | — (in-memory graph fallback) |
+| `RETRIEVER_BACKEND` | Section retrieval backend: `keyword` or `chroma` | `keyword` |
+| `POLICY_GRAPH_BACKEND` | Rule graph backend: `memory` or `neo4j` | `memory` |
+| `BUILD_INDEX_ON_STARTUP` | (unused by app; reserved for scripts) | `false` |
+| `NEO4J_URI` | Neo4j AuraDB connection URI | — (memory graph used) |
 | `NEO4J_USERNAME` | Neo4j username | — |
 | `NEO4J_PASSWORD` | Neo4j password | — |
-| `CHROMA_PERSIST_PATH` | ChromaDB persistence path | — (lexical fallback) |
+| `CHROMA_PERSIST_PATH` | ChromaDB persistence path | `./chroma_db` |
 
 **Never commit `.env`.** The `.gitignore` excludes it.
 
+### Deployment modes
+
+**A. Deployed / Render-safe mode (default)**
+
+The defaults are chosen to fit within Render's free-tier 512 MB memory limit.
+No Chroma, no ONNX model download, no Neo4j connection attempt at startup.
+
+```
+RETRIEVER_BACKEND=keyword       # pure-Python lexical index, built on first request
+POLICY_GRAPH_BACKEND=memory     # in-process rule graph, no network
+```
+
+Policy sections are retrieved by keyword/token overlap.  The rule graph uses
+the same hand-modeled `HIGH_RISK_RULES` set as the Chroma path.  All 21
+official test scenarios pass in this mode.
+
+**B. Local full mode (optional)**
+
+For richer semantic retrieval, set up Chroma and optionally Neo4j:
+
+```bash
+# Build the Chroma vector index (downloads all-MiniLM-L6-v2 once)
+python scripts/build_policy_index.py
+
+# Then run with full backends
+export RETRIEVER_BACKEND=chroma
+export POLICY_GRAPH_BACKEND=neo4j   # plus NEO4J_URI / USERNAME / PASSWORD
+
+uvicorn app.main:app --reload --port 8000
+```
+
+**Render / production**
+
+Start command (single worker, no reload, no offline index builder in lifecycle):
+
+```bash
+uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 1
+```
+
 Fallback behaviour when keys are absent:
 - No `ANTHROPIC_API_KEY` → deterministic routing and policy reasoning (all tests pass in this mode)
-- No Neo4j credentials → in-memory policy graph (identical rule set, no external dependency)
-- ChromaDB embedding failure → keyword-based lexical retrieval
+- `POLICY_GRAPH_BACKEND=memory` → in-memory policy graph (identical rule set, no external dependency)
+- `RETRIEVER_BACKEND=keyword` → keyword-based lexical retrieval (no Chroma, no ONNX)
 
 ---
 
