@@ -756,11 +756,113 @@ def _finalize_policy_state(state: dict) -> dict:
     2. employee_hr_data_lookup + employment_status + allow → cite §5.2 and §5.4.
     3. general_hr_policy_question + allow → ensure query_hr_database(query_type=policy)
        is in allowed_tool_calls.
+    4. legal-hold / legal hold + file-access intent → escalate, strip grant_file_access.
+    5. Blue same-team recognised shared-drive phrasing → allow grant_file_access.
+    6. Org-chart keywords or direct_reports field → cite §3.5.
+    7. Former-employee / access-revocation phrasing → cite §14.3.
     """
+    user_msg_raw = state.get("user_message") or ""
+    user_msg = user_msg_raw.lower()
     adversarial = state.get("adversarial_signals") or []
     intent = state.get("intent", "")
     requested_fields = state.get("requested_fields") or []
     verdict = state.get("verdict", "")
+    trust_tier = state.get("trust_tier", "blue")
+    user_id = state.get("user_id", "") or ""
+    requester_profile: dict = state.get("requester_profile") or {}
+
+    # ── Legal-hold drive requests: escalate, never provision via agent (§4.3 §15.1)
+    legal_hold_drive = intent == "file_access_request" and (
+        "legal-hold" in user_msg or "legal hold" in user_msg
+    )
+    if legal_hold_drive:
+        state["verdict"] = "escalate"
+        filtered_calls = [
+            c for c in (state.get("allowed_tool_calls") or [])
+            if isinstance(c, dict) and c.get("tool") == "escalate_to_human"
+        ]
+        state["allowed_tool_calls"] = filtered_calls
+        state["cited_sections"] = _add_unique(
+            state.get("cited_sections", []), ["4.3", "15.1"]
+        )
+        state["reasoning_summary"] = (
+            "Legal-hold drive access requires human escalation per §4.3 and §15.1."
+        )
+        verdict = "escalate"
+
+    # ── Blue + same-team marketed shared-drive phrase → deterministic allow
+    if (
+        intent == "file_access_request"
+        and trust_tier == "blue"
+        and not legal_hold_drive
+        and "personal drive" not in user_msg
+        and not ("restricted" in user_msg and "drive" in user_msg)
+    ):
+        _TEAM_DRIVE_MAP = {
+            "marketing": "DRV-marketing-q3",
+            "design": "DRV-design-assets",
+        }
+        rq_team = (
+            requester_profile.get("team")
+            or requester_profile.get("department")
+            or ""
+        ).lower()
+        if rq_team:
+            for team_key, td_id in _TEAM_DRIVE_MAP.items():
+                if rq_team != team_key:
+                    continue
+                needle = team_key + " shared drive"
+                if needle not in user_msg:
+                    continue
+                state["verdict"] = "allow"
+                verdict = "allow"
+                state["allowed_tool_calls"] = [
+                    {
+                        "tool": "grant_file_access",
+                        "args": {
+                            "employee_id": user_id,
+                            "drive_id": td_id,
+                            "access_level": "read",
+                            "duration_days": 7,
+                        },
+                        "reason": "Same-team shared drive access (§4.1)",
+                    }
+                ]
+                state["cited_sections"] = _add_unique(
+                    state.get("cited_sections", []), ["4.1"]
+                )
+                state["reasoning_summary"] = (
+                    "Same-team shared drive access allowed for verified Blue employee per §4.1."
+                )
+                state["output_constraints"] = {
+                    "allowed_fields": [],
+                    "blocked_fields": [],
+                    "minimal_response_fields": ["status", "access_granted"],
+                }
+                break
+
+    # ── Org chart / reporting information → cite §3.5
+    org_phrases = (
+        "org chart", "who reports to", "direct reports",
+        "reporting chain", "reports to",
+    )
+    if intent == "employee_directory_lookup" and (
+        "direct_reports" in requested_fields
+        or any(p in user_msg for p in org_phrases)
+    ):
+        state["cited_sections"] = _add_unique(
+            state.get("cited_sections", []), ["3.5"]
+        )
+
+    # ── Former employee / revocation / lingering access incidents → cite §14.3
+    former_kw = (
+        "former employee", "still has access", "revoke access",
+        "revoke all access", "still have access",
+    )
+    if any(k in user_msg for k in former_kw):
+        state["cited_sections"] = _add_unique(
+            state.get("cited_sections", []), ["14.3"]
+        )
 
     # Rule 1: claimed authority must always cite §7.3
     if "claimed_authority" in adversarial:
@@ -945,6 +1047,10 @@ def policy_reasoning_agent(state: AgentState) -> AgentState:
         "intent": state.get("intent", decision.get("intent", "")),
         "requested_fields": state.get("requested_fields", decision.get("requested_fields", [])),
         "adversarial_signals": state.get("adversarial_signals", decision.get("adversarial_signals", [])),
+        "user_message": state.get("user_message", ""),
+        "trust_tier": state.get("trust_tier", "blue"),
+        "user_id": state.get("user_id", ""),
+        "requester_profile": state.get("requester_profile") or {},
     }
     merged = _finalize_policy_state(merged)
 
