@@ -7,8 +7,8 @@ chroma_db/
 .DS_Store
 
 # Evaluation outputs
-gaggia_agent/evaluation/results/*.jsonl
-gaggia_agent/evaluation/results/*.md
+# Keep timestamped raw results out of the repo, but commit the canonical report.
+gaggia_agent/evaluation/results/eval_results_*.jsonl
 
 
 # Demo UI
