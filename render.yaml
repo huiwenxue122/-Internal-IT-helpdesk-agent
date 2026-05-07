@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: gaggia-agent
+    env: docker
+    plan: free
+    autoDeploy: false
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false          # set manually in Render dashboard
+      - key: ANTHROPIC_MODEL
+        value: claude-sonnet-4-20250514
+      - key: CHROMA_PERSIST_PATH
+        value: /tmp/chroma_db   # ephemeral; restarts clear the index (acceptable for demo)
+      - key: NEO4J_URI
+        sync: false
+      - key: NEO4J_USERNAME
+        sync: false
+      - key: NEO4J_PASSWORD
+        sync: false
+      - key: LANGSMITH_API_KEY
+        sync: false
+      - key: LANGSMITH_TRACING
+        value: "true"
+      - key: LANGSMITH_PROJECT
+        value: gaggia-agent

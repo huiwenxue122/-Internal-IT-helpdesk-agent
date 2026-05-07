@@ -1,0 +1,33 @@
+# Core LangGraph stack
+# langchain-core 0.3.x references langchain.debug which was removed in
+# langchain >= 1.0.  Pin langchain < 1.0 until langchain-core drops that
+# back-reference (expected in langchain-core >= 0.3.85).
+# See gaggia_agent/_compat.py for the runtime shim that covers mismatches
+# in environments where versions cannot be pinned (e.g. conda base env).
+langgraph>=0.6,<0.7
+langchain>=0.3,<1.0
+langchain-core>=0.3,<0.4
+langchain-anthropic>=0.3,<0.4
+
+# LLM provider
+anthropic>=0.40
+
+# Policy retrieval
+chromadb>=0.4
+sentence-transformers>=2.0
+
+# Graph database (optional; in-memory fallback used when unavailable)
+neo4j>=5.0
+
+# Utilities
+python-dotenv>=1.0
+typing-extensions>=4.0
+
+# Testing
+pytest>=8.0
+langsmith>=0.7
+
+# Demo API (Phase demo)
+fastapi>=0.100
+uvicorn[standard]>=0.20
+httpx>=0.24          # required by FastAPI TestClient
