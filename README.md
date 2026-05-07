@@ -6,6 +6,14 @@ GaggiaAgent is a LangGraph-orchestrated policy enforcement agent for internal IT
 
 ---
 
+## Live Demo
+
+Product demo: https://internal-it-helpdesk-agent.onrender.com
+
+> **Note:** Hosted on Render's free tier and may cold-start after inactivity. The first request can take 30–60 seconds to respond; subsequent requests are faster.
+
+---
+
 ## Demo
 
 GaggiaAgent ships with a product-style demo UI called the **GaggiaAgent Policy Console**.
